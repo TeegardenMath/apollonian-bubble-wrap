@@ -36,20 +36,6 @@
             opacity: 0;
         }
         
-        .wiggle-overlay {
-            position: absolute;
-            border-radius: 50%;
-            pointer-events: none;
-            animation: wiggle 0.15s ease-in-out;
-        }
-        
-        @keyframes wiggle {
-            0%, 100% { transform: translate(0, 0) scale(1, 1); }
-            25% { transform: translate(2px, 1px) scale(1.03, 0.97); }
-            50% { transform: translate(-1px, -1px) scale(0.98, 1.02); }
-            75% { transform: translate(-2px, 1px) scale(1.02, 0.98); }
-        }
-        
         @keyframes dropletFly {
             0% {
                 transform: translate(0, 0) scale(1);
@@ -121,11 +107,6 @@
             }
             
             draw(highlight = false) {
-                // If wiggling, don't draw (CSS overlay handles it)
-                if (this.isWiggling) {
-                    return;
-                }
-                
                 // If popped, draw children instead
                 if (this.popped) {
                     for (const child of this.children) {
@@ -295,54 +276,15 @@
             pop() {
                 if (this.popped) return;
                 
-                // Mark as wiggling so it doesn't draw
-                this.isWiggling = true;
-                draw(); // Redraw to hide it
+                // Mark as popped immediately
+                this.popped = true;
                 
-                // Create wiggle overlay first
-                this.createWiggleOverlay();
+                // Start generating nested gasket immediately
+                const nestedDepth = Math.max(3, Math.ceil(4 * (this.r / 300)));
+                generateGasketInCircleIncremental(this.x, this.y, this.r, this.depth + 1, nestedDepth, this.children);
                 
-                // Then create droplets after wiggle
-                setTimeout(() => {
-                    this.isWiggling = false;
-                    this.createDropletAnimation();
-                }, 150);
-                
-                // Mark as popped after both animations
-                setTimeout(() => {
-                    this.popped = true;
-                    
-                    // Generate a smaller gasket inside using the incremental generator
-                    const nestedDepth = Math.max(3, Math.ceil(4 * (this.r / 300)));
-                    generateGasketInCircleIncremental(this.x, this.y, this.r, this.depth + 1, nestedDepth, this.children);
-                }, 200);
-            }
-            
-            createWiggleOverlay() {
-                const dropletContainer = document.getElementById('droplet-container');
-                const hue = (this.x * 0.5 + this.y * 0.3 + this.depth * 30) % 360;
-                
-                // Create a visual copy of the bubble that wiggles
-                const wiggle = document.createElement('div');
-                wiggle.className = 'wiggle-overlay';
-                wiggle.style.left = (this.x - this.r) + 'px';
-                wiggle.style.top = (this.y - this.r) + 'px';
-                wiggle.style.width = (this.r * 2) + 'px';
-                wiggle.style.height = (this.r * 2) + 'px';
-                
-                // Create gradient to match bubble appearance
-                wiggle.style.background = `radial-gradient(circle at 30% 30%, 
-                    hsla(${hue}, 80%, 95%, 0.8) 0%, 
-                    hsla(${hue}, 80%, 75%, 0.6) 80%, 
-                    hsla(${hue}, 80%, 60%, 0.4) 100%)`;
-                wiggle.style.border = `2px solid hsla(${hue}, 80%, 50%, 0.6)`;
-                
-                dropletContainer.appendChild(wiggle);
-                
-                // Remove after animation
-                setTimeout(() => {
-                    wiggle.remove();
-                }, 150);
+                // Create droplets overlay
+                this.createDropletAnimation();
             }
             
             createDropletAnimation() {
