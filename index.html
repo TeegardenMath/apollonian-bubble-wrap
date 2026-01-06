@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apollonian Gasket</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+        
+        canvas {
+            display: block;
+            cursor: pointer;
+            max-width: 100%;
+            max-height: 100vh;
+            position: relative;
+        }
+        
+        .droplet {
+            position: absolute;
+            border-radius: 50%;
+            pointer-events: none;
+            opacity: 0;
+        }
+        
+        .wiggle-overlay {
+            position: absolute;
+            border-radius: 50%;
+            pointer-events: none;
+            animation: wiggle 0.15s ease-in-out;
+        }
+        
+        @keyframes wiggle {
+            0%, 100% { transform: translate(0, 0) scale(1, 1); }
+            25% { transform: translate(2px, 1px) scale(1.03, 0.97); }
+            50% { transform: translate(-1px, -1px) scale(0.98, 1.02); }
+            75% { transform: translate(-2px, 1px) scale(1.02, 0.98); }
+        }
+        
+        @keyframes dropletFly {
+            0% {
+                transform: translate(0, 0) scale(1);
+                opacity: 1;
+            }
+            100% {
+                transform: translate(var(--tx), var(--ty)) scale(0.5);
+                opacity: 0;
+            }
+        }
+        
+        #info {
+            position: fixed;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            color: #666;
+            font-size: 18px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 16px 32px;
+            border-radius: 30px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+            pointer-events: none;
+        }
+        
+        #info.hidden {
+            opacity: 0;
+            transform: translateX(-50%) translateY(20px);
+        }
+    </style>
+</head>
+<body>
+    <div style="position: relative; display: inline-block;">
+        <canvas id="canvas"></canvas>
+        <div id="droplet-container"></div>
+    </div>
+    <div id="info">Click on any circle!</div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const info = document.getElementById('info');
+        
+        // Make canvas responsive to screen size
+        function setCanvasSize() {
+            const size = Math.min(window.innerWidth, window.innerHeight) * 0.95;
+            canvas.width = size;
+            canvas.height = size;
+            generateGasket(6);
+            draw();
+        }
+        
+        // Store all circles with their data for click detection
+        let circles = [];
+        
+        // Circle class to store circle data
+        class Circle {
+            constructor(x, y, r, depth = 0, parent = null, isContainer = false) {
+                this.x = x;
+                this.y = y;
+                this.r = Math.abs(r);
+                this.depth = depth;
+                this.parent = parent;
+                this.popped = false;
+                this.isContainer = isContainer; // Explicit flag for container circles
+                this.children = []; // Will hold nested gasket if popped
+            }
+            
+            draw(highlight = false) {
+                // If wiggling, don't draw (CSS overlay handles it)
+                if (this.isWiggling) {
+                    return;
+                }
+                
+                // If popped, draw children instead
+                if (this.popped) {
+                    for (const child of this.children) {
+                        child.draw();
+                    }
+                    return;
+                }
+                
+                // Skip rendering container circles (the outer boundary of any gasket)
+                if (this.isContainer) {
+                    return;
+                }
+                
+                const baseHue = (this.x * 0.5 + this.y * 0.3 + this.depth * 30) % 360;
+                
+                // Subtle darker edge - thinner and more refined
+                const edgeGradient = ctx.createRadialGradient(
+                    this.x,
+                    this.y,
+                    this.r * 0.97,
+                    this.x,
+                    this.y,
+                    this.r
+                );
+                
+                edgeGradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                edgeGradient.addColorStop(0.3, `hsla(${baseHue}, 80%, 45%, 0.08)`);
+                edgeGradient.addColorStop(1, `hsla(${baseHue}, 85%, 40%, 0.18)`);
+                
+                ctx.fillStyle = edgeGradient;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw MORE overlapping color bands with varied positioning for swirly effect
+                const numBands = 5;
+                for (let i = 0; i < numBands; i++) {
+                    // More irregular angles for organic swirls
+                    const angle = (i / numBands) * Math.PI * 2 + (Math.sin(i * 2.3) * 0.5);
+                    const hueShift = i * 75;
+                    
+                    // Vary the offset amounts for more organic patterns
+                    const offsetMagnitude = 0.4 + Math.sin(i * 1.7) * 0.15;
+                    const innerOffset = 0.1 + Math.cos(i * 2.1) * 0.08;
+                    
+                    const gradient = ctx.createRadialGradient(
+                        this.x + Math.cos(angle) * this.r * offsetMagnitude,
+                        this.y + Math.sin(angle) * this.r * offsetMagnitude,
+                        this.r * 0.12,
+                        this.x + Math.cos(angle + 0.8) * this.r * innerOffset,
+                        this.y + Math.sin(angle + 0.8) * this.r * innerOffset,
+                        this.r * 1.05
+                    );
+                    
+                    const hue = (baseHue + hueShift) % 360;
+                    gradient.addColorStop(0, `hsla(${hue}, 0%, 100%, 0)`);
+                    gradient.addColorStop(0.76, `hsla(${hue}, 90%, 75%, 0)`);
+                    gradient.addColorStop(0.88, `hsla(${hue}, 95%, 70%, 0.15)`);
+                    gradient.addColorStop(0.94, `hsla(${hue}, 100%, 65%, 0.38)`);
+                    gradient.addColorStop(0.98, `hsla(${(hue + 60) % 360}, 100%, 60%, 0.42)`);
+                    gradient.addColorStop(1, `hsla(${(hue + 120) % 360}, 95%, 55%, 0.28)`);
+                    
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                if (highlight) {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                // Main highlight - bright but with softer falloff
+                const highlightGradient = ctx.createRadialGradient(
+                    this.x - this.r * 0.3, 
+                    this.y - this.r * 0.3, 
+                    0,
+                    this.x - this.r * 0.3, 
+                    this.y - this.r * 0.3, 
+                    this.r * 0.25
+                );
+                highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+                highlightGradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.75)');
+                highlightGradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.3)');
+                highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                
+                ctx.fillStyle = highlightGradient;
+                ctx.beginPath();
+                ctx.arc(
+                    this.x - this.r * 0.3, 
+                    this.y - this.r * 0.3, 
+                    this.r * 0.25, 
+                    0, 
+                    Math.PI * 2
+                );
+                ctx.fill();
+                
+                // Secondary highlight - softer
+                const highlight2Gradient = ctx.createRadialGradient(
+                    this.x - this.r * 0.18, 
+                    this.y - this.r * 0.42, 
+                    0,
+                    this.x - this.r * 0.18, 
+                    this.y - this.r * 0.42, 
+                    this.r * 0.11
+                );
+                highlight2Gradient.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
+                highlight2Gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.4)');
+                highlight2Gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                
+                ctx.fillStyle = highlight2Gradient;
+                ctx.beginPath();
+                ctx.arc(
+                    this.x - this.r * 0.18, 
+                    this.y - this.r * 0.42, 
+                    this.r * 0.11, 
+                    0, 
+                    Math.PI * 2
+                );
+                ctx.fill();
+                
+                // Tertiary highlight - very subtle
+                ctx.beginPath();
+                ctx.arc(
+                    this.x + this.r * 0.25, 
+                    this.y + this.r * 0.35, 
+                    this.r * 0.06, 
+                    0, 
+                    Math.PI * 2
+                );
+                const highlight3Gradient = ctx.createRadialGradient(
+                    this.x + this.r * 0.25, 
+                    this.y + this.r * 0.35, 
+                    0,
+                    this.x + this.r * 0.25, 
+                    this.y + this.r * 0.35, 
+                    this.r * 0.06
+                );
+                highlight3Gradient.addColorStop(0, 'rgba(255, 255, 255, 0.6)');
+                highlight3Gradient.addColorStop(0.6, 'rgba(255, 255, 255, 0.2)');
+                highlight3Gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                ctx.fillStyle = highlight3Gradient;
+                ctx.fill();
+            }
+            
+            contains(px, py) {
+                if (this.popped) {
+                    // Check children instead
+                    for (const child of this.children) {
+                        const result = child.contains(px, py);
+                        if (result) return result;
+                    }
+                    return null;
+                }
+                
+                // Container circles shouldn't be clickable
+                if (this.isContainer) return null;
+                
+                const dx = px - this.x;
+                const dy = py - this.y;
+                return dx * dx + dy * dy <= this.r * this.r ? this : null;
+            }
+            
+            pop() {
+                if (this.popped) return;
+                
+                // Mark as wiggling so it doesn't draw
+                this.isWiggling = true;
+                draw(); // Redraw to hide it
+                
+                // Create wiggle overlay first
+                this.createWiggleOverlay();
+                
+                // Then create droplets after wiggle
+                setTimeout(() => {
+                    this.isWiggling = false;
+                    this.createDropletAnimation();
+                }, 150);
+                
+                // Mark as popped after both animations
+                setTimeout(() => {
+                    this.popped = true;
+                    
+                    // Generate a smaller gasket inside using the incremental generator
+                    const nestedDepth = Math.max(3, Math.ceil(4 * (this.r / 300)));
+                    generateGasketInCircleIncremental(this.x, this.y, this.r, this.depth + 1, nestedDepth, this.children);
+                }, 200);
+            }
+            
+            createWiggleOverlay() {
+                const dropletContainer = document.getElementById('droplet-container');
+                const hue = (this.x * 0.5 + this.y * 0.3 + this.depth * 30) % 360;
+                
+                // Create a visual copy of the bubble that wiggles
+                const wiggle = document.createElement('div');
+                wiggle.className = 'wiggle-overlay';
+                wiggle.style.left = (this.x - this.r) + 'px';
+                wiggle.style.top = (this.y - this.r) + 'px';
+                wiggle.style.width = (this.r * 2) + 'px';
+                wiggle.style.height = (this.r * 2) + 'px';
+                
+                // Create gradient to match bubble appearance
+                wiggle.style.background = `radial-gradient(circle at 30% 30%, 
+                    hsla(${hue}, 80%, 95%, 0.8) 0%, 
+                    hsla(${hue}, 80%, 75%, 0.6) 80%, 
+                    hsla(${hue}, 80%, 60%, 0.4) 100%)`;
+                wiggle.style.border = `2px solid hsla(${hue}, 80%, 50%, 0.6)`;
+                
+                dropletContainer.appendChild(wiggle);
+                
+                // Remove after animation
+                setTimeout(() => {
+                    wiggle.remove();
+                }, 150);
+            }
+            
+            createDropletAnimation() {
+                const dropletContainer = document.getElementById('droplet-container');
+                const hue = (this.x * 0.5 + this.y * 0.3 + this.depth * 30) % 360;
+                
+                // Create 8 droplets
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+                    const distance = this.r * (0.5 + Math.random() * 0.5);
+                    const tx = Math.cos(angle) * distance;
+                    const ty = Math.sin(angle) * distance + 5; // slight downward
+                    
+                    const droplet = document.createElement('div');
+                    droplet.className = 'droplet';
+                    droplet.style.left = this.x + 'px';
+                    droplet.style.top = this.y + 'px';
+                    droplet.style.width = (2 + Math.random() * 2) + 'px';
+                    droplet.style.height = (2 + Math.random() * 2) + 'px';
+                    droplet.style.backgroundColor = `hsl(${hue}, 80%, 70%)`;
+                    droplet.style.setProperty('--tx', tx + 'px');
+                    droplet.style.setProperty('--ty', ty + 'px');
+                    droplet.style.animation = 'dropletFly 0.4s ease-out forwards';
+                    
+                    dropletContainer.appendChild(droplet);
+                    
+                    // Remove after animation
+                    setTimeout(() => {
+                        droplet.remove();
+                    }, 400);
+                }
+            }
+        }
+        
+        // Solve for Apollonius circle given three circles
+        // Use negative radius to choose external tangency
+        function apolloniusCircle(x1, y1, r1, x2, y2, r2, x3, y3, r3) {
+            const a2 = 2 * (x1 - x2);
+            const b2 = 2 * (y1 - y2);
+            const c2 = 2 * (r2 - r1);
+            const d2 = x1 * x1 + y1 * y1 - r1 * r1 - x2 * x2 - y2 * y2 + r2 * r2;
+            
+            const a3 = 2 * (x1 - x3);
+            const b3 = 2 * (y1 - y3);
+            const c3 = 2 * (r3 - r1);
+            const d3 = x1 * x1 + y1 * y1 - r1 * r1 - x3 * x3 - y3 * y3 + r3 * r3;
+            
+            const ab = a3 * b2 - a2 * b3;
+            const xa = (b2 * d3 - b3 * d2) / ab - x1;
+            const xb = (b3 * c2 - b2 * c3) / ab;
+            
+            const ya = (a3 * d2 - a2 * d3) / ab - y1;
+            const yb = (a2 * c3 - a3 * c2) / ab;
+            
+            const A = xb * xb + yb * yb - 1;
+            const B = 2 * (xa * xb + ya * yb + r1);
+            const C = xa * xa + ya * ya - r1 * r1;
+            
+            const r = A ? (-B - Math.sqrt(B * B - 4 * A * C)) / (2 * A) : (-C / B);
+            
+            if (isNaN(r)) return null;
+            
+            return {
+                x: xa + xb * r + x1,
+                y: ya + yb * r + y1,
+                r: Math.abs(r)
+            };
+        }
+        
+        // Helper to get all 2-element subsets of an array
+        function subsets(arr) {
+            const result = [];
+            for (let i = 0; i < arr.length; i++) {
+                for (let j = i + 1; j < arr.length; j++) {
+                    result.push([arr[i], arr[j]]);
+                }
+            }
+            return result;
+        }
+        
+        // Three types of Apollonius circles based on sign of radii
+        function enclosingCircle(c1, c2, c3) {
+            return apolloniusCircle(c1.x, c1.y, +c1.r, c2.x, c2.y, +c2.r, c3.x, c3.y, +c3.r);
+        }
+        
+        function borderCircle(c1, c2, c3) {
+            return apolloniusCircle(c1.x, c1.y, +c1.r, c2.x, c2.y, -c2.r, c3.x, c3.y, -c3.r);
+        }
+        
+        function inscribedCircle(c1, c2, c3) {
+            return apolloniusCircle(c1.x, c1.y, -c1.r, c2.x, c2.y, -c2.r, c3.x, c3.y, -c3.r);
+        }
+        
+        // Incremental gasket generator - adds circles over multiple frames
+        function generateGasketInCircleIncremental(centerX, centerY, radius, startDepth, maxDepth, targetArray) {
+            // Start with three mutually tangent circles arranged symmetrically
+            const threeCircles = [0, 1, 2].map((i) => {
+                return new Circle(
+                    centerX + radius / 2 * Math.sin((i + 1) * 2 * Math.PI / 3 + Math.PI),
+                    centerY + radius / 2 * Math.cos((i + 1) * 2 * Math.PI / 3 + Math.PI),
+                    0,
+                    startDepth
+                );
+            });
+            
+            // Calculate initial radius
+            const dx = threeCircles[0].x - threeCircles[1].x;
+            const dy = threeCircles[0].y - threeCircles[1].y;
+            const initialRadius = Math.sqrt(dx * dx + dy * dy) / 2;
+            
+            threeCircles.forEach(c => c.r = initialRadius);
+            
+            // Find natural enclosing circle
+            const bigCircleData = enclosingCircle(threeCircles[0], threeCircles[1], threeCircles[2]);
+            
+            // Scale to match target radius
+            const scaleFactor = radius / bigCircleData.r;
+            
+            threeCircles.forEach(c => {
+                c.r *= scaleFactor;
+                c.x = centerX + (c.x - bigCircleData.x) * scaleFactor;
+                c.y = centerY + (c.y - bigCircleData.y) * scaleFactor;
+            });
+            
+            // Create container circle (not drawn, used for tangency calculations)
+            const bigCircle = new Circle(centerX, centerY, radius, startDepth - 1, null, true);
+            
+            // Add initial circles immediately
+            targetArray.push(bigCircle);
+            threeCircles.forEach(c => targetArray.push(c));
+            
+            // Draw immediately with initial circles
+            draw();
+            
+            // Set up incremental generation
+            let triplets = [threeCircles];
+            subsets(threeCircles).forEach(pair => {
+                triplets.push([bigCircle, ...pair]);
+            });
+            
+            const relativeMaxDepth = startDepth + Math.min(5, Math.ceil(6 * scaleFactor));
+            let currentDepth = startDepth + 1;
+            
+            // Process remaining depths in batches using requestAnimationFrame
+            function processNextDepth() {
+                if (currentDepth > relativeMaxDepth) return;
+                
+                const newTriplets = [];
+                const newCircles = [];
+                
+                for (const triplet of triplets) {
+                    // Sort by radius (largest first)
+                    triplet.sort((a, b) => b.r - a.r);
+                    
+                    let solutionData;
+                    
+                    // Choose which Apollonius circle to solve for
+                    if (triplet.indexOf(bigCircle) === -1) {
+                        solutionData = inscribedCircle(triplet[0], triplet[1], triplet[2]);
+                    } else {
+                        solutionData = borderCircle(triplet[0], triplet[1], triplet[2]);
+                    }
+                    
+                    if (!solutionData || solutionData.r < 1) continue;
+                    
+                    const solution = new Circle(solutionData.x, solutionData.y, solutionData.r, currentDepth);
+                    newCircles.push(solution);
+                    
+                    // Generate new triplets for next iteration
+                    subsets(triplet).forEach(pair => {
+                        newTriplets.push([solution, ...pair]);
+                    });
+                }
+                
+                // Add new circles to target array
+                newCircles.forEach(c => targetArray.push(c));
+                
+                triplets = newTriplets;
+                currentDepth++;
+                
+                // Draw and continue
+                draw();
+                
+                if (currentDepth <= relativeMaxDepth) {
+                    requestAnimationFrame(processNextDepth);
+                }
+            }
+            
+            // Start incremental processing on next frame
+            requestAnimationFrame(processNextDepth);
+        }
+        
+        // Generate a gasket synchronously (for initial load)
+        function generateGasketInCircle(centerX, centerY, radius, startDepth = 0, maxDepth = 5) {
+            const localCircles = [];
+            
+            const threeCircles = [0, 1, 2].map((i) => {
+                return new Circle(
+                    centerX + radius / 2 * Math.sin((i + 1) * 2 * Math.PI / 3 + Math.PI),
+                    centerY + radius / 2 * Math.cos((i + 1) * 2 * Math.PI / 3 + Math.PI),
+                    0,
+                    startDepth
+                );
+            });
+            
+            const dx = threeCircles[0].x - threeCircles[1].x;
+            const dy = threeCircles[0].y - threeCircles[1].y;
+            const initialRadius = Math.sqrt(dx * dx + dy * dy) / 2;
+            
+            threeCircles.forEach(c => {
+                c.r = initialRadius;
+                localCircles.push(c);
+            });
+            
+            const bigCircleData = enclosingCircle(threeCircles[0], threeCircles[1], threeCircles[2]);
+            const scaleFactor = radius / bigCircleData.r;
+            
+            threeCircles.forEach(c => {
+                c.r *= scaleFactor;
+                c.x = centerX + (c.x - bigCircleData.x) * scaleFactor;
+                c.y = centerY + (c.y - bigCircleData.y) * scaleFactor;
+            });
+            
+            // Mark as container so it won't be drawn
+            const bigCircle = new Circle(centerX, centerY, radius, startDepth - 1, null, true);
+            localCircles.push(bigCircle);
+            
+            let triplets = [threeCircles];
+            
+            subsets(threeCircles).forEach(pair => {
+                triplets.push([bigCircle, ...pair]);
+            });
+            
+            const relativeMaxDepth = startDepth + Math.min(5, Math.ceil(6 * scaleFactor));
+            
+            for (let depth = startDepth + 1; depth <= relativeMaxDepth; depth++) {
+                const newTriplets = [];
+                
+                triplets.forEach(triplet => {
+                    triplet.sort((a, b) => b.r - a.r);
+                    
+                    let solutionData;
+                    
+                    if (triplet.indexOf(bigCircle) === -1) {
+                        solutionData = inscribedCircle(triplet[0], triplet[1], triplet[2]);
+                    } else {
+                        solutionData = borderCircle(triplet[0], triplet[1], triplet[2]);
+                    }
+                    
+                    if (!solutionData || solutionData.r < 1) return;
+                    
+                    const solution = new Circle(solutionData.x, solutionData.y, solutionData.r, depth);
+                    localCircles.push(solution);
+                    
+                    subsets(triplet).forEach(pair => {
+                        newTriplets.push([solution, ...pair]);
+                    });
+                });
+                
+                triplets = newTriplets;
+            }
+            
+            return localCircles;
+        }
+        
+        // Generate Apollonian Gasket
+        function generateGasket(maxDepth = 6) {
+            circles.length = 0;
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const radius = canvas.width / 2;
+            
+            const generated = generateGasketInCircle(centerX, centerY, radius, 0, maxDepth);
+            circles.push(...generated);
+        }
+        
+        // Draw all circles using tree traversal (not flat array)
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#f8f9fa';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw top-level circles (they handle their own children via recursion)
+            for (const circle of circles) {
+                circle.draw();
+            }
+        }
+        
+        // Handle clicks
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Hide info on first click
+            info.classList.add('hidden');
+            
+            // Find the smallest (most specific) circle at this point
+            function findDeepestCircle(circleList, x, y) {
+                let deepest = null;
+                let smallestRadius = Infinity;
+                
+                for (const circle of circleList) {
+                    if (circle.popped) {
+                        // Check children recursively
+                        const childResult = findDeepestCircle(circle.children, x, y);
+                        if (childResult && childResult.r < smallestRadius) {
+                            deepest = childResult;
+                            smallestRadius = childResult.r;
+                        }
+                    } else if (!circle.isContainer) {
+                        // Check if this circle contains the point
+                        const dx = x - circle.x;
+                        const dy = y - circle.y;
+                        if (dx * dx + dy * dy <= circle.r * circle.r) {
+                            if (circle.r < smallestRadius) {
+                                deepest = circle;
+                                smallestRadius = circle.r;
+                            }
+                        }
+                    }
+                }
+                
+                return deepest;
+            }
+            
+            const clicked = findDeepestCircle(circles, x, y);
+            
+            if (clicked && !clicked.popped) {
+                // Pop the bubble and fill with new gasket
+                clicked.pop();
+                // Note: draw() is called inside pop() via the incremental generator
+            }
+        });
+        
+        // Initialize
+        setCanvasSize();
+        
+        // Handle window resize
+        window.addEventListener('resize', setCanvasSize);
+    </script>
+</body>
+</html>
